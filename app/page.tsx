@@ -92,8 +92,10 @@ export default function Home() {
     }
     
     let finalTarget = actualTarget;
-    // 사용자가 드롭다운을 안 누르고 한글을 그냥 쳤을 경우를 대비해 사전에서 한 번 더 찾음
+    
+    // 🌟 버그 수정 완료: 사용자가 드롭다운에서 선택한 '이모지 포함 전체 텍스트(item.text)'와 일치하는지도 검사합니다!
     const matchedItem = TARGET_DICTIONARY.find(item => 
+      item.text === displayTarget || // <- 이 한 줄이 추가되었습니다!
       item.keywords.some(k => k.toLowerCase() === displayTarget.toLowerCase()) || 
       item.label === displayTarget.toLowerCase()
     );
@@ -130,7 +132,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           youtube_url: youtubeUrl,
-          target_label: actualTarget,
+          target_label: finalTarget,
           max_crops: 50, // 프론트에서 컨트롤 불가능하게 고정!
           start_time: startTime,
           end_time: endTime,
