@@ -1,168 +1,306 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useRef, useEffect } from 'react';
+import { TARGET_DICTIONARY } from '@/constants/targetDictionary'; // 🌟 스마트 타겟 검색을 위한 COCO 데이터셋 사전 (자주 쓰는 것들 위주로 세팅)
 
 export default function Home() {
-  const [serverUrl, setServerUrl] = useState("주소를 불러오는 중...");
+  // === 상태 관리 ===
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [startTime, setStartTime] = useState('00:00:00');
+  const [endTime, setEndTime] = useState('00:05:00');
   
-  // 🌟 [보안 적용] 하드코딩된 비밀번호 대신 환경 변수에서 값을 가져옵니다.
-  const [apiKey, setApiKey] = useState(process.env.NEXT_PUBLIC_VIBE_API_KEY || "");
+  // 스마트 타겟 상태
+  const [displayTarget, setDisplayTarget] = useState('');
+  const [actualTarget, setActualTarget] = useState(''); // 백엔드로 보낼 진짜 영어 값
+  const [suggestions, setSuggestions] = useState<typeof TARGET_DICTIONARY>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   
-  const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [target, setTarget] = useState("bird");
-  const [maxCrops, setMaxCrops] = useState(5);
-  
-  const [loading, setLoading] = useState(false);
-  const [log, setLog] = useState("");
-  const [images, setImages] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [backendUrl, setBackendUrl] = useState(''); // Firebase에서 가져온 URL 저장
 
+  const autocompleteRef = useRef<HTMLDivElement>(null);
+
+  // 화면 밖 클릭 시 드롭다운 닫기
   useEffect(() => {
-    const fetchBackendUrl = async () => {
-      try {
-        // 🌟 [보안 적용] 하드코딩된 Firebase 주소 대신 환경 변수에서 값을 가져옵니다.
-        const firebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_URL;
-        
-        if (!firebaseUrl) {
-          setServerUrl("");
-          setLog("⚠️ 환경 변수 누락: Firebase URL이 설정되지 않았습니다.");
-          return;
-        }
-
-        const response = await fetch(firebaseUrl);
-        const data = await response.json();
-        
-        if (data && data.backend_url) {
-          setServerUrl(data.backend_url);
-          setLog("✅ 클라우드에서 AI 엔진 주소를 안전하게 불러왔습니다.");
-        } else {
-          setServerUrl("");
-          setLog("⚠️ 엔진 주소가 비어있습니다. 서버가 켜져 있는지 확인하세요.");
-        }
-      } catch (err) {
-        console.error("Firebase 데이터 로드 실패:", err);
-        setServerUrl("");
-        setLog("⚠️ 엔진 주소 자동 로드에 실패했습니다. 수동으로 입력해주세요.");
+    function handleClickOutside(event: MouseEvent) {
+      if (autocompleteRef.current && !autocompleteRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
       }
-    };
-
-    fetchBackendUrl();
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleMine = async () => {
-    setLoading(true);
-    setLog("⏳ 엔진 가동 중... 유튜브 스트림을 분석하고 있습니다.");
-    setImages([]);
+  // 타겟 검색 로직
+  const handleTargetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setDisplayTarget(value);
+    setActualTarget(value); // 영어를 직접 쳤을 때를 대비
+    
+    if (value.length > 0) {
+      const filtered = TARGET_DICTIONARY.filter(item => 
+        item.keywords.some(keyword => keyword.toLowerCase().includes(value.toLowerCase()))
+      );
+      setSuggestions(filtered);
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectTarget = (label: string, text: string) => {
+    setDisplayTarget(text);
+    setActualTarget(label); // 시스템에는 'bird' 입력
+    setShowSuggestions(false);
+  };
+
+  // 시간 문자열(MM:SS)을 초(Seconds)로 변환하는 검증 함수
+  const parseTimeToSeconds = (timeStr: string) => {
+    const parts = timeStr.split(':').reverse();
+    let seconds = 0;
+    for (let i = 0; i < parts.length; i++) {
+      seconds += parseInt(parts[i] || '0') * Math.pow(60, i);
+    }
+    return seconds;
+  };
+
+  // 수확 시작! (Submit)
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setResult(null);
+
+    // 1. 시간 검증 로직 (엣지 케이스 차단)
+    const startSec = parseTimeToSeconds(startTime);
+    const endSec = parseTimeToSeconds(endTime);
+    
+    if (isNaN(startSec) || isNaN(endSec)) {
+      setError('시간 형식이 잘못되었습니다. (예: 01:20 또는 00:01:20)');
+      return;
+    }
+    if (startSec >= endSec) {
+      setError('🚨 시작 시간이 종료 시간보다 같거나 늦을 수 없습니다!');
+      return;
+    }
+
+    // 2. 타겟 검증 및 강제 변환
+    if (!actualTarget) {
+      setError('수확할 타겟을 입력해 주세요.');
+      return;
+    }
+    
+    let finalTarget = actualTarget;
+    // 사용자가 드롭다운을 안 누르고 한글을 그냥 쳤을 경우를 대비해 사전에서 한 번 더 찾음
+    const matchedItem = TARGET_DICTIONARY.find(item => 
+      item.keywords.some(k => k.toLowerCase() === displayTarget.toLowerCase()) || 
+      item.label === displayTarget.toLowerCase()
+    );
+
+    if (matchedItem) {
+      finalTarget = matchedItem.label; // 'bird' 등 올바른 영어로 강제 교체
+    } else {
+      setError('❌ 인식할 수 없는 타겟입니다. 자동완성 목록에서 선택해 주세요.');
+      return;
+    }
+
+    setIsLoading(true);
 
     try {
-      const response = await fetch(`${serverUrl}/api/mine`, {
-        method: "POST",
+      // 3. Firebase에서 현재 백엔드(Ngrok) 주소 가져오기
+      let currentBackendUrl = backendUrl;
+      if (!currentBackendUrl) {
+        const firebaseRes = await fetch(process.env.NEXT_PUBLIC_FIREBASE_URL as string);
+        const firebaseData = await firebaseRes.json();
+        currentBackendUrl = firebaseData?.backend_url;
+        setBackendUrl(currentBackendUrl);
+        
+        if (!currentBackendUrl) {
+          throw new Error("AI 엔진(백엔드)이 오프라인 상태입니다. 엔진을 켜주세요.");
+        }
+      }
+
+      // 4. 백엔드로 수확 요청 보내기 (max_crops는 보안상 50으로 고정해서 숨겨 보냄)
+      const response = await fetch(`${currentBackendUrl}/api/mine`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey, // 환경 변수에서 가져온 자물쇠 전달!
-          "ngrok-skip-browser-warning": "true" 
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.NEXT_PUBLIC_VIBE_API_KEY as string,
         },
         body: JSON.stringify({
           youtube_url: youtubeUrl,
-          target_label: target,
-          max_crops: Number(maxCrops)
-        })
+          target_label: actualTarget,
+          max_crops: 50, // 프론트에서 컨트롤 불가능하게 고정!
+          start_time: startTime,
+          end_time: endTime,
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error(`에러 발생: ${response.status}`);
-      }
-
       const data = await response.json();
-      setLog(`✅ 수확 완료! (상태: ${data.status})`);
       
-      const imageUrls = await Promise.all(data.files.map(async (file: string) => {
-        const imgUrl = `${serverUrl}/${file}`;
-        const imgRes = await fetch(imgUrl, {
-          headers: {
-            "ngrok-skip-browser-warning": "true"
-          }
-        });
-        
-        const blob = await imgRes.blob();
-        return URL.createObjectURL(blob);
-      }));
-
-      setImages(imageUrls);
-
+      if (response.ok) {
+        setResult(data);
+      } else {
+        throw new Error(data.detail || data.message || '수확 중 오류가 발생했습니다.');
+      }
     } catch (err: any) {
-      setLog(`❌ 실패: ${err.message}`);
+      setError(err.message);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-8 font-sans">
+    <main className="min-h-screen bg-gray-950 text-white p-8 font-sans">
       <div className="max-w-4xl mx-auto space-y-8">
         
-        <header className="border-b border-gray-700 pb-4">
-          <h1 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
-            Vibe-Clipper Dashboard 🦉
+        {/* 헤더 부분 */}
+        <header className="text-center space-y-4">
+          <h1 className="text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+            Vibe-Clipper V2
           </h1>
-          <p className="text-gray-400 mt-2">AI 기반 유튜브 실시간 객체 수확 파이프라인</p>
+          <p className="text-gray-400">AI 기반 고순도 에셋 자동화 파이프라인</p>
         </header>
 
-        <div className="bg-gray-800 p-6 rounded-xl shadow-lg space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Ngrok 서버 URL</label>
-              <input type="text" value={serverUrl} onChange={e => setServerUrl(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+        {/* 입력 폼 */}
+        <form onSubmit={handleSubmit} className="bg-gray-900 p-6 rounded-2xl shadow-xl border border-gray-800 space-y-6">
+          
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-gray-300">📺 유튜브 URL</label>
+            <input
+              type="text"
+              required
+              value={youtubeUrl}
+              onChange={(e) => setYoutubeUrl(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 transition-all"
+              placeholder="https://www.youtube.com/watch?v=..."
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative" ref={autocompleteRef}>
+            {/* 스마트 타겟 검색기 */}
+            <div className="space-y-2 relative">
+              <label className="text-sm font-semibold text-gray-300">🎯 수확할 타겟 (검색)</label>
+              <input
+                type="text"
+                required
+                value={displayTarget}
+                onChange={handleTargetChange}
+                onFocus={() => displayTarget && setShowSuggestions(true)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500 transition-all"
+                placeholder="예: 독수리, 자동차, 사람..."
+              />
+              {/* 자동완성 드롭다운 */}
+              {showSuggestions && suggestions.length > 0 && (
+                <ul className="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl overflow-hidden">
+                  {suggestions.map((item) => (
+                    <li 
+                      key={item.label}
+                      onClick={() => selectTarget(item.label, item.text)}
+                      className="p-3 hover:bg-gray-700 cursor-pointer text-sm transition-colors"
+                    >
+                      {item.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">API Key (보안)</label>
-              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+
+            {/* 시간 지정 */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-300">⏱️ 시작 시간</label>
+                <input
+                  type="text"
+                  required
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500"
+                  placeholder="00:00:00"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-300">⏳ 종료 시간</label>
+                <input
+                  type="text"
+                  required
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-blue-500"
+                  placeholder="00:05:00"
+                />
+              </div>
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">유튜브 URL</label>
-            <input type="text" placeholder="https://youtube.com/..." value={youtubeUrl} onChange={e => setYoutubeUrl(e.target.value)} className="w-full bg-gray-700 p-3 rounded outline-none text-lg focus:ring-2 focus:ring-green-400" />
-          </div>
+          {error && <div className="p-4 bg-red-900/50 border border-red-500/50 text-red-200 rounded-lg text-sm">{error}</div>}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">수확할 타겟 (영문)</label>
-              <input type="text" value={target} onChange={e => setTarget(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">최대 수확량</label>
-              <input type="number" value={maxCrops} onChange={e => setMaxCrops(Number(e.target.value))} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
-            </div>
-          </div>
-
-          <button 
-            onClick={handleMine} 
-            disabled={loading || !youtubeUrl || !serverUrl}
-            className={`w-full py-4 text-xl font-bold rounded-lg transition-all ${loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:scale-[1.02] shadow-lg shadow-green-500/30'}`}
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? "데이터 추출 중... 🔄" : "🚀 AI 수확 시작"}
+            {isLoading ? (
+              <span className="animate-pulse">⏳ AI 엔진 수확 중... (최대 수십 초 소요)</span>
+            ) : (
+              <span>🚀 AI 수확 시작</span>
+            )}
           </button>
-        </div>
+        </form>
 
-        {log && (
-          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 text-center text-green-300">
-            {log}
-          </div>
-        )}
-
-        {images.length > 0 && (
-          <div className="space-y-4">
-            <h2 className="text-2xl font-bold">🎯 수확된 갤러리</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {images.map((imgSrc, idx) => (
-                <div key={idx} className="aspect-square bg-gray-800 rounded-lg overflow-hidden border border-gray-700 shadow-md">
-                  <img src={imgSrc} alt={`Crop ${idx}`} className="w-full h-full object-cover hover:scale-110 transition-transform" />
-                </div>
-              ))}
+        {/* 결과 화면 */}
+        {result && result.files && result.files.length > 0 && (
+          <div className="bg-gray-900 p-6 rounded-2xl shadow-xl border border-gray-800 space-y-6 animate-fade-in-up">
+            
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+              <h2 className="text-2xl font-bold text-green-400">✨ {result.message}</h2>
+              
+              {/* 🌟 ZIP 다운로드 버튼 */}
+              {result.zip_url && (
+                <a 
+                  href={`${backendUrl}/${result.zip_url}`}
+                  download
+                  className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-full shadow-lg transition-all flex items-center gap-2"
+                >
+                  📦 전체 다운로드 (ZIP)
+                </a>
+              )}
             </div>
+
+            {/* 개선된 5장 갤러리 뷰 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* 메인 썸네일 (가장 잘 나온 1장) */}
+              <div className="md:col-span-2 h-64 md:h-96 relative rounded-xl overflow-hidden bg-gray-800 group">
+                <img 
+                  src={`${backendUrl}/${result.files[0]}`} 
+                  alt="Main Crop" 
+                  className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
+                />
+              </div>
+              
+              {/* 서브 썸네일 (최대 4장) */}
+              <div className="grid grid-cols-2 gap-4 md:col-span-1">
+                {result.files.slice(1, 5).map((file: string, index: number) => (
+                  <div key={index} className="h-32 md:h-44 relative rounded-xl overflow-hidden bg-gray-800 group">
+                    <img 
+                      src={`${backendUrl}/${file}`} 
+                      alt={`Crop ${index + 1}`} 
+                      className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            {result.files.length > 5 && (
+              <p className="text-center text-gray-500 text-sm mt-4">
+                * 위 이미지는 미리보기용 5장입니다. 전체 데이터는 ZIP 파일로 다운로드하세요.
+              </p>
+            )}
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }
