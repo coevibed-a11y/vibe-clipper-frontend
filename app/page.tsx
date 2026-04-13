@@ -1,65 +1,127 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
 
 export default function Home() {
+  const [serverUrl, setServerUrl] = useState("https://여기에_NGROK_주소_입력.ngrok-free.dev");
+  const [apiKey, setApiKey] = useState("my_vibe_secret_123");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [target, setTarget] = useState("bird");
+  const [maxCrops, setMaxCrops] = useState(5);
+  
+  const [loading, setLoading] = useState(false);
+  const [log, setLog] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+
+  const handleMine = async () => {
+    setLoading(true);
+    setLog("⏳ 엔진 가동 중... 유튜브 스트림을 분석하고 있습니다.");
+    setImages([]);
+
+    try {
+      const response = await fetch(`${serverUrl}/api/mine`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey, // 자물쇠 전달!
+          "ngrok-skip-browser-warning": "true" // ngrok 파란 화면 스킵!
+        },
+        body: JSON.stringify({
+          youtube_url: youtubeUrl,
+          target_label: target,
+          max_crops: Number(maxCrops)
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`에러 발생: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setLog(`✅ 수확 완료! (상태: ${data.status})`);
+      
+      // 서버에서 온 파일 경로(dataset/...)를 완전한 URL로 변환
+      const imageUrls = data.files.map((file: string) => `${serverUrl}/${file}`);
+      setImages(imageUrls);
+
+    } catch (err: any) {
+      setLog(`❌ 실패: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="min-h-screen bg-gray-900 text-white p-8 font-sans">
+      <div className="max-w-4xl mx-auto space-y-8">
+        
+        {/* 헤더 */}
+        <header className="border-b border-gray-700 pb-4">
+          <h1 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
+            Vibe-Clipper Dashboard 🦉
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          <p className="text-gray-400 mt-2">AI 기반 유튜브 실시간 객체 수확 파이프라인</p>
+        </header>
+
+        {/* 컨트롤 패널 */}
+        <div className="bg-gray-800 p-6 rounded-xl shadow-lg space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Ngrok 서버 URL</label>
+              <input type="text" value={serverUrl} onChange={e => setServerUrl(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">API Key (보안)</label>
+              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">유튜브 URL</label>
+            <input type="text" placeholder="https://youtube.com/..." value={youtubeUrl} onChange={e => setYoutubeUrl(e.target.value)} className="w-full bg-gray-700 p-3 rounded outline-none text-lg focus:ring-2 focus:ring-green-400" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">수확할 타겟 (영문)</label>
+              <input type="text" value={target} onChange={e => setTarget(e.target.value)} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">최대 수확량</label>
+              <input type="number" value={maxCrops} onChange={e => setMaxCrops(Number(e.target.value))} className="w-full bg-gray-700 p-2 rounded outline-none focus:ring-2 focus:ring-green-400" />
+            </div>
+          </div>
+
+          <button 
+            onClick={handleMine} 
+            disabled={loading || !youtubeUrl}
+            className={`w-full py-4 text-xl font-bold rounded-lg transition-all ${loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:scale-[1.02] shadow-lg shadow-green-500/30'}`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            {loading ? "데이터 추출 중... 🔄" : "🚀 AI 수확 시작"}
+          </button>
         </div>
-      </main>
+
+        {/* 상태 로그 */}
+        {log && (
+          <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 text-center text-green-300">
+            {log}
+          </div>
+        )}
+
+        {/* 갤러리 */}
+        {images.length > 0 && (
+          <div className="space-y-4">
+            <h2 className="text-2xl font-bold">🎯 수확된 갤러리</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {images.map((imgSrc, idx) => (
+                <div key={idx} className="aspect-square bg-gray-800 rounded-lg overflow-hidden border border-gray-700 shadow-md">
+                  <img src={imgSrc} alt={`Crop ${idx}`} className="w-full h-full object-cover hover:scale-110 transition-transform" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
