@@ -40,8 +40,20 @@ export default function Home() {
       const data = await response.json();
       setLog(`✅ 수확 완료! (상태: ${data.status})`);
       
-      // 서버에서 온 파일 경로(dataset/...)를 완전한 URL로 변환
-      const imageUrls = data.files.map((file: string) => `${serverUrl}/${file}`);
+      // 서버에서 온 파일 경로를 받아서, 헤더를 붙여 '직접' 다운로드 (Ngrok 우회)
+      const imageUrls = await Promise.all(data.files.map(async (file: string) => {
+        const imgUrl = `${serverUrl}/${file}`;
+        const imgRes = await fetch(imgUrl, {
+          headers: {
+            "ngrok-skip-browser-warning": "true" // 여기서 이미지 가져올 때도 프리패스!
+          }
+        });
+        
+        // 다운받은 이미지를 브라우저가 읽을 수 있는 가상 URL(Blob)로 변환
+        const blob = await imgRes.blob();
+        return URL.createObjectURL(blob);
+      }));
+
       setImages(imageUrls);
 
     } catch (err: any) {
