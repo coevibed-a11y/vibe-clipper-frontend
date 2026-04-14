@@ -67,7 +67,7 @@ export default function Home() {
   };
 
   // 수확 시작! (Submit)
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
     setResult(null);
@@ -129,6 +129,7 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': process.env.NEXT_PUBLIC_VIBE_API_KEY as string,
+          'ngrok-skip-browser-warning': '69420',
         },
         body: JSON.stringify({
           youtube_url: youtubeUrl,
@@ -252,14 +253,14 @@ export default function Home() {
         </form>
 
         {/* 결과 화면 */}
-        {result && result.files && result.files.length > 0 && (
+        {result && (
           <div className="bg-gray-900 p-6 rounded-2xl shadow-xl border border-gray-800 space-y-6 animate-fade-in-up">
             
             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
               <h2 className="text-2xl font-bold text-green-400">✨ {result.message}</h2>
               
-              {/* 🌟 ZIP 다운로드 버튼 */}
-              {result.zip_url && (
+              {/* 🌟 ZIP 다운로드 버튼 (파일이 있을 때만 렌더링) */}
+              {result.zip_url && result.files.length > 0 && (
                 <a 
                   href={`${backendUrl}/${result.zip_url}`}
                   download
@@ -270,35 +271,52 @@ export default function Home() {
               )}
             </div>
 
-            {/* 개선된 5장 갤러리 뷰 */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 메인 썸네일 (가장 잘 나온 1장) */}
-              <div className="md:col-span-2 h-64 md:h-96 relative rounded-xl overflow-hidden bg-gray-800 group">
-                <img 
-                  src={`${backendUrl}/${result.files[0]}`} 
-                  alt="Main Crop" 
-                  className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
-                />
-              </div>
-              
-              {/* 서브 썸네일 (최대 4장) */}
-              <div className="grid grid-cols-2 gap-4 md:col-span-1">
-                {result.files.slice(1, 5).map((file: string, index: number) => (
-                  <div key={index} className="h-32 md:h-44 relative rounded-xl overflow-hidden bg-gray-800 group">
+            {/* 조건부 렌더링: 파일이 있으면 갤러리 표시, 없으면 안내 문구 표시 */}
+            {result.files && result.files.length > 0 ? (
+              <>
+                {/* 개선된 5장 갤러리 뷰 */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* 메인 썸네일 */}
+                  <div className="md:col-span-2 h-64 md:h-96 relative rounded-xl overflow-hidden bg-gray-800 group">
                     <img 
-                      src={`${backendUrl}/${file}`} 
-                      alt={`Crop ${index + 1}`} 
-                      className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
+                      src={`${backendUrl}/${result.files[0]}`} 
+                      alt="Main Crop" 
+                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
                     />
                   </div>
-                ))}
+                  
+                  {/* 서브 썸네일 */}
+                  <div className="grid grid-cols-2 gap-4 md:col-span-1">
+                    {result.files.slice(1, 5).map((file: string, index: number) => (
+                      <div key={index} className="h-32 md:h-44 relative rounded-xl overflow-hidden bg-gray-800 group">
+                        <img 
+                          src={`${backendUrl}/${file}`} 
+                          alt={`Crop ${index + 1}`} 
+                          className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                {result.files.length > 5 && (
+                  <div className="text-center space-y-1 mt-4">
+                    <p className="text-gray-400 text-sm font-medium">
+                      * 서버 안정성을 위해 회당 최대 수확량은 50장으로 제한됩니다.
+                    </p>
+                    <p className="text-gray-500 text-xs">
+                      위 이미지는 미리보기이며, 전체 50장의 데이터는 ZIP 파일로 확인하세요.
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              // 🌟 수확량이 0개일 때 보여줄 친절한 빈 상태(Empty State) 디자인
+              <div className="py-12 flex flex-col items-center justify-center bg-gray-800/50 rounded-xl border border-gray-700 border-dashed">
+                <span className="text-5xl mb-4">🪹</span>
+                <p className="text-gray-300 font-semibold">해당 구간에서 타겟을 발견하지 못했습니다.</p>
+                <p className="text-gray-500 text-sm mt-2">다른 유튜브 영상이나, 타겟이 더 명확히 등장하는 시간대를 설정해 보세요.</p>
               </div>
-            </div>
-            
-            {result.files.length > 5 && (
-              <p className="text-center text-gray-500 text-sm mt-4">
-                * 위 이미지는 미리보기용 5장입니다. 전체 데이터는 ZIP 파일로 다운로드하세요.
-              </p>
             )}
           </div>
         )}
